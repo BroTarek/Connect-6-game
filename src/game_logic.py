@@ -291,10 +291,10 @@ class Connect6Game:
 
         seen = set()
         for (x, y) in moves:
-            display_x, display_y = x + 1, y + 1
             # Check coordinate types and bounds
             if not (isinstance(x, int) and isinstance(y, int)):
                 return False, "Coordinates must be integers."
+            display_x, display_y = x + 1, y + 1
             if not (0 <= x < self.board.size and 0 <= y < self.board.size):
                 return False, (
                     f"Move ({display_x}, {display_y}) is out of bounds. "
