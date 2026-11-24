@@ -1,6 +1,7 @@
 # main.py
 
 import sys
+import tkinter as tk
 import src.constants as c
 from src.game_logic import Connect6Game
 from src.gui import Connect6GUI
@@ -154,8 +155,16 @@ def main_console():
 
 def main_gui():
     """Run the game in GUI mode."""
-    # Get board size from GUI dialog
-    board_size = Connect6GUI.get_board_size_dialog()
+    try:
+        # Get board size from GUI dialog
+        board_size = Connect6GUI.get_board_size_dialog()
+    except tk.TclError as e:
+        print(f"Cannot launch GUI: {e}")
+        print("A graphical display server ($DISPLAY) is required for GUI mode.")
+        print("To run the game in console/terminal mode, use:")
+        print("    python3 main.py --console")
+        return
+
     if board_size is None:
         print("Game cancelled.")
         return
