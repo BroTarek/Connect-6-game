@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Connect-6 Minimax & Alpha-Beta Pruning Visualizer</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --panel: #1e293b;
+            --border: #334155;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+            --human: #ef4444;
+            --ai: #3b82f6;
+            --window: rgba(250, 204, 21, 0.18);
+            --window-border: #facc15;
+            --active: #22c55e;
+            --pruned: #f43f5e;
+        }
+
+        * {
+            box-sizing: border-box;
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+
+        body {
+            margin: 0;
+            padding: 20px;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 1.4rem;
+            text-align: center;
+        }
+
+        .subtitle {
+            color: var(--muted);
+            font-size: 0.9rem;
+            margin-top: -10px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        button {
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: background 0.15s;
+        }
+
+        button:hover {
+            background: #1d4ed8;
+        }
+
+        button:disabled {
+            background: #475569;
+            cursor: not-allowed;
+        }
+
+        button.secondary {
+            background: #334155;
+        }
+
+        button.secondary:hover {
+            background: #475569;
+        }
+
+        .step-banner {
+            width: 100%;
+            max-width: 1120px;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-left: 5px solid var(--active);
+            border-radius: 8px;
+            padding: 14px 18px;
+        }
+
+        .step-title {
+            font-weight: 700;
+            font-size: 1.05rem;
+            margin-bottom: 4px;
+            color: #38bdf8;
+        }
+
+        .step-desc {
+            font-size: 0.92rem;
+            color: #e2e8f0;
+            line-height: 1.45;
+        }
+
+        .workspace {
+            display: grid;
+            grid-template-columns: 360px 1fr;
+            gap: 18px;
+            width: 100%;
+            max-width: 1120px;
+        }
+
+        @media (max-width: 900px) {
+            .workspace {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .card h2 {
+            margin: 0 0 12px 0;
+            font-size: 1rem;
+            color: var(--muted);
+            width: 100%;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 8px;
+        }
+
+        /* 7x7 Board */
+        .board {
+            display: grid;
+            grid-template-columns: 22px repeat(7, 40px);
+            grid-template-rows: 22px repeat(7, 40px);
+            gap: 2px;
+            user-select: none;
+        }
+
+        .coord {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            color: var(--muted);
+        }
+
+        .cell {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            transition: all 0.25s;
+        }
+
+        .cell.in-window {
+            background: var(--window);
+            border-color: var(--window-border);
+        }
+
+        .stone {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            font-weight: 700;
+            color: white;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+        }
+
+        .stone.human {
+            background: var(--human);
+        }
+
+        .stone.ai {
+            background: var(--ai);
+        }
+
+        .stone.ghost {
+            opacity: 0.65;
+            border: 2px dashed white;
+        }
+
+        .legend {
+            display: flex;
+            gap: 14px;
+            margin-top: 14px;
+            font-size: 0.8rem;
+            color: var(--muted);
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        /* SVG Tree */
+        svg {
+            width: 100%;
+            height: 410px;
+            overflow: visible;
+        }
+
+        .edge {
+            stroke: #475569;
+            stroke-width: 2;
+            fill: none;
+            transition: stroke 0.25s, stroke-width 0.25s;
+        }
+
+        .edge.active {
+            stroke: #38bdf8;
+            stroke-width: 3;
+        }
+
+        .edge.pruned {
+            stroke: var(--pruned);
+            stroke-dasharray: 6 4;
+            opacity: 0.65;
+        }
+
+        .node rect {
+            fill: #0f172a;
+            stroke: #475569;
+            stroke-width: 2;
+            rx: 8;
+            transition: all 0.25s;
+        }
+
+        .node.active rect {
+            stroke: var(--active);
+            stroke-width: 3;
+            fill: #052e16;
+        }
+
+        .node.done rect {
+            stroke: #38bdf8;
+        }
+
+        .node.pruned rect {
+            stroke: var(--pruned);
+            fill: #4c0519;
+            opacity: 0.65;
+        }
+
+        .node text {
+            fill: var(--text);
+            font-size: 11px;
+            text-anchor: middle;
+        }
+
+        .node .role {
+            font-weight: 700;
+            fill: #38bdf8;
+            font-size: 11px;
+        }
+
+        .node .role.min {
+            fill: #f87171;
+        }
+
+        .node .role.leaf {
+            fill: #facc15;
+        }
+
+        .node .ab {
+            fill: #94a3b8;
+            font-size: 10px;
+        }
+
+        .node .score {
+            fill: #4ade80;
+            font-weight: 700;
+            font-size: 12px;
+        }
+
+        .node.pruned .score {
+            fill: #fb7185;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Connect-6: Minimax & Alpha-Beta Pruning Walkthrough</h1>
+    <div class="subtitle">7×7 Board | Human (MIN) plays (4,4) → AI (MAX) searches Depth 3</div>
+
+    <div class="controls">
+        <button id="prevBtn" class="secondary">← Previous</button>
+        <button id="nextBtn">Next Step →</button>
+        <button id="resetBtn" class="secondary">Reset</button>
+        <span id="stepCounter" style="color: var(--muted); font-size: 0.9rem; margin-left: 8px;">Step 1 / 7</span>
+    </div>
+
+    <div class="step-banner">
+        <div class="step-title" id="stepTitle"></div>
+        <div class="step-desc" id="stepDesc"></div>
+    </div>
+
+    <div class="workspace">
+        <!-- Left: 7x7 Board -->
+        <div class="card">
+            <h2>7×7 Connect-6 Board (Hypothetical State)</h2>
+            <div class="board" id="board"></div>
+            <div class="legend">
+                <div class="legend-item"><span class="dot" style="background: var(--human);"></span> Human (MIN)</div>
+                <div class="legend-item"><span class="dot" style="background: var(--ai);"></span> AI (MAX)</div>
+                <div class="legend-item"><span class="dot"
+                        style="background: var(--window-border); border-radius: 2px;"></span> 3×3 Window</div>
+                <div class="legend-item"><span class="dot" style="border: 2px dashed white;"></span> Simulated Move
+                </div>
+            </div>
+        </div>
+
+        <!-- Right: Minimax Tree -->
+        <div class="card">
+            <h2>Minimax Search Tree (Depth 3 → Depth 0)</h2>
+            <svg id="treeSvg" viewBox="0 0 680 400"></svg>
+        </div>
+    </div>
+
+    <script>
+        // Tree node layout
+        const nodes = [
+            { id: "root", x: 340, y: 35, w: 165, h: 52, role: "MAX (Depth 3)", roleClass: "", label: "Root: AI Turn" },
+            { id: "mB", x: 170, y: 140, w: 175, h: 52, role: "MIN (Depth 2)", roleClass: "min", label: "Move B: (3,3),(3,4)" },
+            { id: "mC", x: 510, y: 140, w: 175, h: 52, role: "MIN (Depth 2)", roleClass: "min", label: "Move C: (3,3),(5,5)" },
+            { id: "h1", x: 170, y: 245, w: 175, h: 52, role: "MAX (Depth 1)", roleClass: "", label: "Human: (4,3),(4,5)" },
+            { id: "h2", x: 425, y: 245, w: 150, h: 52, role: "MAX (Depth 1)", roleClass: "", label: "Human Reply 1" },
+            { id: "h3", x: 595, y: 245, w: 140, h: 52, role: "MAX (Depth 1)", roleClass: "", label: "27 Other Replies" },
+            { id: "leafB", x: 170, y: 350, w: 185, h: 52, role: "HEURISTIC (Depth 0)", roleClass: "leaf", label: "AI: (4,2),(3,5)" }
+        ];
+
+        const edges = [
+            { id: "e_root_mB", from: "root", to: "mB" },
+            { id: "e_root_mC", from: "root", to: "mC" },
+            { id: "e_mB_h1", from: "mB", to: "h1" },
+            { id: "e_h1_leafB", from: "h1", to: "leafB" },
+            { id: "e_mC_h2", from: "mC", to: "h2" },
+            { id: "e_mC_h3", from: "mC", to: "h3" }
+        ];
+
+        // 7 Walkthrough Steps
+        const steps = [
+            {
+                title: "Step 1: Base Case & Candidate Filtering (3×3 Window)",
+                desc: "Human plays (4,4). Instead of testing all 1,128 pairs on the 7×7 board, the AI shrinks the search to the 3×3 neighborhood around (4,4) — leaving 8 empty cells (28 candidate pairs).",
+                showWindow: true,
+                stones: [{ r: 4, c: 4, type: "human", ghost: false }],
+                activeNodes: ["root"],
+                doneNodes: [],
+                prunedNodes: [],
+                activeEdges: [],
+                prunedEdges: [],
+                ab: { root: "α = -∞, β = +∞" },
+                scores: {}
+            },
+            {
+                title: "Step 2: Move Ordering → Test Strongest Move First (Move B)",
+                desc: "Move ordering ranks connected pairs first. MAX tests Move B: placing AI stones at (3,3) and (3,4) to form a 2-in-a-row, then recurses down to MIN (Depth 2).",
+                showWindow: true,
+                stones: [
+                    { r: 4, c: 4, type: "human", ghost: false },
+                    { r: 3, c: 3, type: "ai", ghost: true },
+                    { r: 3, c: 4, type: "ai", ghost: true }
+                ],
+                activeNodes: ["mB"],
+                doneNodes: ["root"],
+                prunedNodes: [],
+                activeEdges: ["e_root_mB"],
+                prunedEdges: [],
+                ab: { root: "α = -∞, β = +∞", mB: "α = -∞, β = +∞" },
+                scores: {}
+            },
+            {
+                title: "Step 3: Recursive Look-Ahead (Human's Best Reply & AI Counter)",
+                desc: "At Depth 2 (MIN), the Human replies at (4,3) and (4,5) to threaten a horizontal 3-in-a-row. At Depth 1 (MAX), the AI blocks at (4,2) and extends its own line at (3,5).",
+                showWindow: false,
+                stones: [
+                    { r: 4, c: 4, type: "human", ghost: false },
+                    { r: 3, c: 3, type: "ai", ghost: true },
+                    { r: 3, c: 4, type: "ai", ghost: true },
+                    { r: 4, c: 3, type: "human", ghost: true },
+                    { r: 4, c: 5, type: "human", ghost: true },
+                    { r: 4, c: 2, type: "ai", ghost: true },
+                    { r: 3, c: 5, type: "ai", ghost: true }
+                ],
+                activeNodes: ["h1", "leafB"],
+                doneNodes: ["root", "mB"],
+                prunedNodes: [],
+                activeEdges: ["e_root_mB", "e_mB_h1", "e_h1_leafB"],
+                prunedEdges: [],
+                ab: { root: "α = -∞, β = +∞", mB: "α = -∞, β = +∞", h1: "α = -∞, β = +∞" },
+                scores: {}
+            },
+            {
+                title: "Step 4: Heuristic Evaluation at Depth 0 & Score Bubbling",
+                desc: "Depth 0 is reached! The heuristic scores all 6-cell lines: AI's 3-in-a-row minus Human's blocked 3-in-a-row = +25. This score bubbles back up to the Root, updating α = +25.",
+                showWindow: false,
+                stones: [
+                    { r: 4, c: 4, type: "human", ghost: false },
+                    { r: 3, c: 3, type: "ai", ghost: true },
+                    { r: 3, c: 4, type: "ai", ghost: true },
+                    { r: 4, c: 3, type: "human", ghost: true },
+                    { r: 4, c: 5, type: "human", ghost: true },
+                    { r: 4, c: 2, type: "ai", ghost: true },
+                    { r: 3, c: 5, type: "ai", ghost: true }
+                ],
+                activeNodes: ["root"],
+                doneNodes: ["mB", "h1", "leafB"],
+                prunedNodes: [],
+                activeEdges: ["e_root_mB", "e_mB_h1", "e_h1_leafB"],
+                prunedEdges: [],
+                ab: { root: "α = +25, β = +∞", mB: "β = +25", h1: "α = +25" },
+                scores: { leafB: "+25", h1: "+25", mB: "+25", root: "Best: +25" }
+            },
+            {
+                title: "Step 5: Testing Move C with Inherited α = +25",
+                desc: "Next, Root tests Move C: splitting AI stones at (3,3) and (5,5). It passes α = +25 down to MIN. The Human's very first reply creates a strong open threat, returning -40.",
+                showWindow: false,
+                stones: [
+                    { r: 4, c: 4, type: "human", ghost: false },
+                    { r: 3, c: 3, type: "ai", ghost: true },
+                    { r: 5, c: 5, type: "ai", ghost: true },
+                    { r: 4, c: 3, type: "human", ghost: true },
+                    { r: 4, c: 5, type: "human", ghost: true }
+                ],
+                activeNodes: ["mC", "h2"],
+                doneNodes: ["root", "mB", "h1", "leafB"],
+                prunedNodes: [],
+                activeEdges: ["e_root_mC", "e_mC_h2"],
+                prunedEdges: [],
+                ab: { root: "α = +25, β = +∞", mC: "α = +25, β = -40" },
+                scores: { leafB: "+25", h1: "+25", mB: "+25", h2: "-40" }
+            },
+            {
+                title: "Step 6: Alpha-Beta Pruning Cutoff! (β ≤ α)",
+                desc: "At Move C, β (-40) ≤ α (+25)! Because Move B already guarantees +25 and the Human can force -40 on Move C, MAX will NEVER pick Move C. The remaining 27 replies are PRUNED immediately.",
+                showWindow: false,
+                stones: [
+                    { r: 4, c: 4, type: "human", ghost: false },
+                    { r: 3, c: 3, type: "ai", ghost: true },
+                    { r: 5, c: 5, type: "ai", ghost: true }
+                ],
+                activeNodes: ["mC"],
+                doneNodes: ["root", "mB", "h1", "leafB", "h2"],
+                prunedNodes: ["h3"],
+                activeEdges: ["e_root_mC"],
+                prunedEdges: ["e_mC_h3"],
+                ab: { root: "α = +25, β = +∞", mC: "β (-40) ≤ α (+25)!" },
+                scores: { leafB: "+25", h1: "+25", mB: "+25", h2: "-40", h3: "✂ PRUNED" }
+            },
+            {
+                title: "Step 7: Final Decision — AI Plays Move B!",
+                desc: "Search completes. Root selects Move B ((3,3) and (3,4)) with the highest backed-up score (+25) and commits both stones to the real 7×7 board.",
+                showWindow: false,
+                stones: [
+                    { r: 4, c: 4, type: "human", ghost: false },
+                    { r: 3, c: 3, type: "ai", ghost: false },
+                    { r: 3, c: 4, type: "ai", ghost: false }
+                ],
+                activeNodes: ["root", "mB"],
+                doneNodes: ["h1", "leafB", "h2"],
+                prunedNodes: ["mC", "h3"],
+                activeEdges: ["e_root_mB"],
+                prunedEdges: ["e_mC_h3"],
+                ab: { root: "Chosen: Move B (+25)" },
+                scores: { leafB: "+25", h1: "+25", mB: "★ +25", h2: "-40", h3: "✂ PRUNED" }
+            }
+        ];
+
+        let currentStep = 0;
+
+        function renderBoard(step) {
+            const boardEl = document.getElementById("board");
+            boardEl.innerHTML = "";
+
+            // Top-left empty corner + column headers 1..7
+            boardEl.appendChild(document.createElement("div"));
+            for (let c = 1; c <= 7; c++) {
+                const hdr = document.createElement("div");
+                hdr.className = "coord";
+                hdr.textContent = c;
+                boardEl.appendChild(hdr);
+            }
+
+            for (let r = 1; r <= 7; r++) {
+                const rowHdr = document.createElement("div");
+                rowHdr.className = "coord";
+                rowHdr.textContent = r;
+                boardEl.appendChild(rowHdr);
+
+                for (let c = 1; c <= 7; c++) {
+                    const cell = document.createElement("div");
+                    cell.className = "cell";
+                    if (step.showWindow && r >= 3 && r <= 5 && c >= 3 && c <= 5) {
+                        cell.classList.add("in-window");
+                    }
+
+                    const stone = step.stones.find(s => s.r === r && s.c === c);
+                    if (stone) {
+                        const sEl = document.createElement("div");
+                        sEl.className = `stone ${stone.type} ${stone.ghost ? "ghost" : ""}`;
+                        sEl.textContent = stone.type === "human" ? "H" : "AI";
+                        cell.appendChild(sEl);
+                    }
+                    boardEl.appendChild(cell);
+                }
+            }
+        }
+
+        function renderTree(step) {
+            const svg = document.getElementById("treeSvg");
+            svg.innerHTML = "";
+
+            const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
+
+            // Draw edges
+            edges.forEach(e => {
+                const from = nodeMap[e.from];
+                const to = nodeMap[e.to];
+                const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                line.setAttribute("x1", from.x);
+                line.setAttribute("y1", from.y + from.h / 2);
+                line.setAttribute("x2", to.x);
+                line.setAttribute("y2", to.y - to.h / 2);
+                let cls = "edge";
+                if (step.activeEdges.includes(e.id)) cls += " active";
+                if (step.prunedEdges.includes(e.id)) cls += " pruned";
+                line.setAttribute("class", cls);
+                svg.appendChild(line);
+            });
+
+            // Draw nodes
+            nodes.forEach(n => {
+                const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                let cls = "node";
+                if (step.activeNodes.includes(n.id)) cls += " active";
+                else if (step.prunedNodes.includes(n.id)) cls += " pruned";
+                else if (step.doneNodes.includes(n.id)) cls += " done";
+                g.setAttribute("class", cls);
+
+                const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                rect.setAttribute("x", n.x - n.w / 2);
+                rect.setAttribute("y", n.y - n.h / 2);
+                rect.setAttribute("width", n.w);
+                rect.setAttribute("height", n.h);
+                g.appendChild(rect);
+
+                const roleText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                roleText.setAttribute("x", n.x);
+                roleText.setAttribute("y", n.y - 10);
+                roleText.setAttribute("class", `role ${n.roleClass}`);
+                roleText.textContent = n.role;
+                g.appendChild(roleText);
+
+                const lblText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                lblText.setAttribute("x", n.x);
+                lblText.setAttribute("y", n.y + 5);
+                lblText.textContent = n.label;
+                g.appendChild(lblText);
+
+                const subText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                subText.setAttribute("x", n.x);
+                subText.setAttribute("y", n.y + 19);
+                if (step.scores[n.id]) {
+                    subText.setAttribute("class", "score");
+                    subText.textContent = step.scores[n.id];
+                } else if (step.ab[n.id]) {
+                    subText.setAttribute("class", "ab");
+                    subText.textContent = step.ab[n.id];
+                }
+                g.appendChild(subText);
+
+                svg.appendChild(g);
+            });
+        }
+
+        function update() {
+            const step = steps[currentStep];
+            document.getElementById("stepTitle").textContent = step.title;
+            document.getElementById("stepDesc").textContent = step.desc;
+            document.getElementById("stepCounter").textContent = `Step ${currentStep + 1} / ${steps.length}`;
+            document.getElementById("prevBtn").disabled = currentStep === 0;
+            document.getElementById("nextBtn").disabled = currentStep === steps.length - 1;
+            renderBoard(step);
+            renderTree(step);
+        }
+
+        document.getElementById("prevBtn").onclick = () => { if (currentStep > 0) { currentStep--; update(); } };
+        document.getElementById("nextBtn").onclick = () => { if (currentStep < steps.length - 1) { currentStep++; update(); } };
+        document.getElementById("resetBtn").onclick = () => { currentStep = 0; update(); };
+
+        update();
+    </script>
+</body>
+
+</html>

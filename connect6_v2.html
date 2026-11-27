@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Connect-6: All 28 Pairs Minimax & Alpha-Beta Visualizer</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --panel: #1e293b;
+            --border: #334155;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+            --human: #ef4444;
+            --ai: #3b82f6;
+            --window: rgba(250, 204, 21, 0.18);
+            --window-border: #facc15;
+            --active: #22c55e;
+            --pruned: #f43f5e;
+        }
+
+        * {
+            box-sizing: border-box;
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+
+        body {
+            margin: 0;
+            padding: 20px;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 14px;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 1.35rem;
+            text-align: center;
+        }
+
+        .subtitle {
+            color: var(--muted);
+            font-size: 0.9rem;
+            margin-top: -8px;
+            text-align: center;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        button {
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        button:hover {
+            background: #1d4ed8;
+        }
+
+        button:disabled {
+            background: #475569;
+            cursor: not-allowed;
+        }
+
+        button.secondary {
+            background: #334155;
+        }
+
+        button.secondary:hover {
+            background: #475569;
+        }
+
+        .step-banner {
+            width: 100%;
+            max-width: 1280px;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-left: 5px solid var(--active);
+            border-radius: 8px;
+            padding: 12px 16px;
+        }
+
+        .step-title {
+            font-weight: 700;
+            font-size: 1.02rem;
+            margin-bottom: 4px;
+            color: #38bdf8;
+        }
+
+        .step-desc {
+            font-size: 0.9rem;
+            color: #e2e8f0;
+            line-height: 1.45;
+        }
+
+        .workspace {
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            gap: 16px;
+            width: 100%;
+            max-width: 1280px;
+        }
+
+        @media (max-width: 950px) {
+            .workspace {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-width: 0;
+        }
+
+        .card h2 {
+            margin: 0 0 10px 0;
+            font-size: 0.95rem;
+            color: var(--muted);
+            width: 100%;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* 7x7 Board */
+        .board {
+            display: grid;
+            grid-template-columns: 20px repeat(7, 40px);
+            grid-template-rows: 20px repeat(7, 40px);
+            gap: 2px;
+            user-select: none;
+        }
+
+        .coord {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            color: var(--muted);
+        }
+
+        .cell {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .cell.in-window {
+            background: var(--window);
+            border-color: var(--window-border);
+        }
+
+        .stone {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.68rem;
+            font-weight: 700;
+            color: white;
+        }
+
+        .stone.human {
+            background: var(--human);
+        }
+
+        .stone.ai {
+            background: var(--ai);
+        }
+
+        .stone.ghost {
+            opacity: 0.72;
+            border: 2px dashed white;
+        }
+
+        .legend {
+            display: flex;
+            gap: 12px;
+            margin-top: 12px;
+            font-size: 0.78rem;
+            color: var(--muted);
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .dot {
+            width: 11px;
+            height: 11px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .inspector {
+            margin-top: 12px;
+            width: 100%;
+            background: #0f172a;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px;
+            font-size: 0.82rem;
+            color: #cbd5e1;
+            line-height: 1.45;
+        }
+
+        .inspector strong {
+            color: #38bdf8;
+        }
+
+        /* Scrollable SVG Tree Container */
+        .tree-scroll {
+            width: 100%;
+            overflow-x: auto;
+            padding-bottom: 10px;
+            border-radius: 6px;
+            background: #0b1120;
+            border: 1px solid #1e293b;
+        }
+
+        .tree-hint {
+            font-size: 0.78rem;
+            color: #94a3b8;
+            margin-bottom: 8px;
+            width: 100%;
+        }
+
+        svg {
+            display: block;
+        }
+
+        .edge {
+            stroke: #334155;
+            stroke-width: 1.6;
+            fill: none;
+        }
+
+        .edge.active {
+            stroke: #38bdf8;
+            stroke-width: 2.8;
+        }
+
+        .edge.best {
+            stroke: #22c55e;
+            stroke-width: 3;
+        }
+
+        .edge.pruned {
+            stroke: var(--pruned);
+            stroke-dasharray: 5 4;
+            opacity: 0.6;
+        }
+
+        .node {
+            cursor: pointer;
+        }
+
+        .node rect {
+            fill: #0f172a;
+            stroke: #475569;
+            stroke-width: 1.8;
+            rx: 7;
+            transition: stroke 0.15s, fill 0.15s;
+        }
+
+        .node:hover rect {
+            stroke: #facc15;
+        }
+
+        .node.selected rect {
+            stroke: #facc15;
+            stroke-width: 3;
+            fill: #1e293b;
+        }
+
+        .node.active rect {
+            stroke: var(--active);
+            stroke-width: 2.8;
+            fill: #052e16;
+        }
+
+        .node.done rect {
+            stroke: #38bdf8;
+        }
+
+        .node.pruned rect {
+            stroke: var(--pruned);
+            fill: #4c0519;
+            opacity: 0.75;
+        }
+
+        .node text {
+            fill: var(--text);
+            font-size: 10.5px;
+            text-anchor: middle;
+            pointer-events: none;
+        }
+
+        .node .role {
+            font-weight: 700;
+            fill: #38bdf8;
+            font-size: 10px;
+        }
+
+        .node .role.min {
+            fill: #f87171;
+        }
+
+        .node .role.leaf {
+            fill: #facc15;
+        }
+
+        .node .score {
+            fill: #4ade80;
+            font-weight: 700;
+            font-size: 11px;
+        }
+
+        .node.pruned .score {
+            fill: #fb7185;
+        }
+
+        .node .ab {
+            fill: #94a3b8;
+            font-size: 9.5px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Connect-6: All 28 Candidate Pairs (Minimax + Alpha-Beta Tree)</h1>
+    <div class="subtitle">7×7 Board | Human plays (4,4) → 8 empty neighbors in 3×3 window → C(8,2) = 28 AI move pairs
+    </div>
+
+    <div class="controls">
+        <button id="prevBtn" class="secondary">← Previous</button>
+        <button id="nextBtn">Next Step →</button>
+        <button id="resetBtn" class="secondary">Reset</button>
+        <span id="stepCounter" style="color: var(--muted); font-size: 0.9rem; margin-left: 6px;">Step 1 / 5</span>
+    </div>
+
+    <div class="step-banner">
+        <div class="step-title" id="stepTitle"></div>
+        <div class="step-desc" id="stepDesc"></div>
+    </div>
+
+    <div class="workspace">
+        <!-- Left: 7x7 Board -->
+        <div class="card">
+            <h2>7×7 Board Preview</h2>
+            <div class="board" id="board"></div>
+            <div class="legend">
+                <div class="legend-item"><span class="dot" style="background: var(--human);"></span> Human (MIN)</div>
+                <div class="legend-item"><span class="dot" style="background: var(--ai);"></span> AI (MAX)</div>
+                <div class="legend-item"><span class="dot"
+                        style="background: var(--window-border); border-radius: 2px;"></span> 3×3 Window</div>
+                <div class="legend-item"><span class="dot" style="border: 2px dashed white;"></span> Simulated</div>
+            </div>
+            <div class="inspector" id="inspector">
+                Click any of the <strong>28 pair nodes</strong> in the tree to preview its coordinates on the board.
+            </div>
+        </div>
+
+        <!-- Right: Scrollable Full 28-Pair Tree -->
+        <div class="card">
+            <h2>
+                <span>Full Minimax Tree (All 28 Branches)</span>
+                <span id="statsBadge" style="font-size: 0.8rem; color: #38bdf8;"></span>
+            </h2>
+            <div class="tree-hint">↔ Scroll horizontally to inspect all 28 pairs. Click any pair node to view it on the
+                7×7 board.</div>
+            <div class="tree-scroll" id="treeScroll">
+                <svg id="treeSvg"></svg>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            // 1. Generate all 8 neighbors around (4,4)
+            const neighbors = [];
+            for (let r = 3; r <= 5; r++) {
+                for (let c = 3; c <= 5; c++) {
+                    if (r === 4 && c === 4) continue;
+                    neighbors.push({ r, c });
+                }
+            }
+
+            // 2. Generate all C(8,2) = 28 pairs with realistic heuristic & minimax outcomes
+            const pairs = [];
+            for (let i = 0; i < neighbors.length; i++) {
+                for (let j = i + 1; j < neighbors.length; j++) {
+                    const p1 = neighbors[i];
+                    const p2 = neighbors[j];
+                    const dist = Math.hypot(p1.r - p2.r, p1.c - p2.c);
+                    const orthogonalAdj = dist === 1;
+                    const diagAdj = Math.abs(dist - Math.SQRT2) < 0.01;
+                    const sameLineThroughCenter = (p1.r + p2.r === 8 && p1.c + p2.c === 8);
+
+                    // Heuristic move-ordering score & simulated Depth-3 minimax value
+                    let orderScore = 0;
+                    let minimaxVal = 0;
+                    let tag = "";
+
+                    if (orthogonalAdj) {
+                        orderScore = 90;
+                        minimaxVal = 25;
+                        tag = "Connected 2-in-a-row (Orthogonal)";
+                    } else if (diagAdj) {
+                        orderScore = 70;
+                        minimaxVal = 15;
+                        tag = "Connected 2-in-a-row (Diagonal)";
+                    } else if (sameLineThroughCenter) {
+                        orderScore = 45;
+                        minimaxVal = -10;
+                        tag = "Split opposite sides (Blocks 1 line)";
+                    } else {
+                        orderScore = 20;
+                        minimaxVal = -35;
+                        tag = "Disconnected stones (Weak)";
+                    }
+
+                    // Small deterministic tie-breaker so Pair #1 is clearly best (+25)
+                    const tie = (p1.r === 3 && p1.c === 3 && p2.r === 3 && p2.c === 4) ? 5 : 0;
+
+                    pairs.push({
+                        id: `p_${i}_${j}`,
+                        p1, p2,
+                        label: `(${p1.r},${p1.c}) & (${p2.r},${p2.c})`,
+                        orderScore: orderScore + tie,
+                        minimaxVal: minimaxVal + (tie ? 3 : 0),
+                        tag
+                    });
+                }
+            }
+
+            // Keep both unsorted (raw generation) and sorted (move-ordered) lists
+            const rawPairs = [...pairs];
+            const sortedPairs = [...pairs].sort((a, b) => b.orderScore - a.orderScore);
+
+            // Walkthrough steps
+            const steps = [
+                {
+                    title: "Step 1: Generate All 28 Candidate Pairs from the 3×3 Window",
+                    desc: "Human plays (4,4). Scanning the 3×3 neighborhood yields 8 empty cells, which produce C(8,2) = 28 possible 2-stone AI moves. All 28 branches are shown below.",
+                    useSorted: false,
+                    mode: "generate",
+                    showWindow: true,
+                    focusIdx: 0
+                },
+                {
+                    title: "Step 2: Move Ordering (Sort All 28 Pairs Best-First)",
+                    desc: "Before searching, the AI sorts all 28 pairs so connected 2-in-a-row moves appear on the left and weak disconnected pairs move to the right. This maximizes Alpha-Beta Pruning.",
+                    useSorted: true,
+                    mode: "ordered",
+                    showWindow: true,
+                    focusIdx: 0
+                },
+                {
+                    title: "Step 3: Search Pair #1 Down to Depth 0 → Sets α = +28",
+                    desc: "MAX tests Pair #1: (3,3) & (3,4). It recurses through Human's best reply (Depth 2) and AI's counter (Depth 1) to Depth 0, returning +28. Root updates α = +28.",
+                    useSorted: true,
+                    mode: "firstEval",
+                    showWindow: false,
+                    focusIdx: 0
+                },
+                {
+                    title: "Step 4: Alpha-Beta Pruning Across Pairs #2 to #28",
+                    desc: "Every remaining pair inherits α = +28. Whenever the Human's very first reply forces a score ≤ +28 (β ≤ α), Alpha-Beta immediately PRUNES the rest of that pair's subtree!",
+                    useSorted: true,
+                    mode: "pruning",
+                    showWindow: false,
+                    focusIdx: 12
+                },
+                {
+                    title: "Step 5: Final Decision — AI Commits Best Pair (3,3) & (3,4)",
+                    desc: "All 28 branches are resolved (1 full baseline + 27 early cutoffs). Root selects Pair #1 with the highest guaranteed score (+28) and places both AI stones on the board.",
+                    useSorted: true,
+                    mode: "final",
+                    showWindow: false,
+                    focusIdx: 0
+                }
+            ];
+
+            let currentStep = 0;
+            let selectedPairIndex = 0;
+
+            function getActiveList() {
+                return steps[currentStep].useSorted ? sortedPairs : rawPairs;
+            }
+
+            function renderBoard() {
+                const step = steps[currentStep];
+                const list = getActiveList();
+                const pair = list[selectedPairIndex] || list[0];
+                const boardEl = document.getElementById("board");
+                boardEl.innerHTML = "";
+
+                const stones = [{ r: 4, c: 4, type: "human", ghost: false }];
+                if (step.mode !== "generate" || selectedPairIndex !== null) {
+                    const isFinalCommit = step.mode === "final" && selectedPairIndex === 0;
+                    stones.push({ r: pair.p1.r, c: pair.p1.c, type: "ai", ghost: !isFinalCommit });
+                    stones.push({ r: pair.p2.r, c: pair.p2.c, type: "ai", ghost: !isFinalCommit });
+                }
+
+                // Top-left + col headers
+                boardEl.appendChild(document.createElement("div"));
+                for (let c = 1; c <= 7; c++) {
+                    const hdr = document.createElement("div");
+                    hdr.className = "coord";
+                    hdr.textContent = c;
+                    boardEl.appendChild(hdr);
+                }
+
+                for (let r = 1; r <= 7; r++) {
+                    const rowHdr = document.createElement("div");
+                    rowHdr.className = "coord";
+                    rowHdr.textContent = r;
+                    boardEl.appendChild(rowHdr);
+
+                    for (let c = 1; c <= 7; c++) {
+                        const cell = document.createElement("div");
+                        cell.className = "cell";
+                        if (step.showWindow && r >= 3 && r <= 5 && c >= 3 && c <= 5) {
+                            cell.classList.add("in-window");
+                        }
+                        const st = stones.find(s => s.r === r && s.c === c);
+                        if (st) {
+                            const sEl = document.createElement("div");
+                            sEl.className = `stone ${st.type} ${st.ghost ? "ghost" : ""}`;
+                            sEl.textContent = st.type === "human" ? "H" : "AI";
+                            cell.appendChild(sEl);
+                        }
+                        boardEl.appendChild(cell);
+                    }
+                }
+
+                // Update inspector box
+                const statusText =
+                    step.mode === "generate" ? "Unordered candidate" :
+                        step.mode === "ordered" ? `Move-order priority: ${pair.orderScore}` :
+                            step.mode === "firstEval" ? (selectedPairIndex === 0 ? "Evaluated to Depth 0 → +28 (Sets α = +28)" : "Waiting in queue...") :
+                                (selectedPairIndex === 0 ? "★ BEST MOVE (+28) — Selected by MAX" : `✂ PRUNED (Human reply gives ${pair.minimaxVal} ≤ α = +28)`);
+
+                document.getElementById("inspector").innerHTML =
+                    `<strong>Pair #${selectedPairIndex + 1}:</strong> ${pair.label}<br/>` +
+                    `<strong>Pattern:</strong> ${pair.tag}<br/>` +
+                    `<strong>Status:</strong> ${statusText}`;
+            }
+
+            function renderTree() {
+                const step = steps[currentStep];
+                const list = getActiveList();
+                const svg = document.getElementById("treeSvg");
+                svg.innerHTML = "";
+
+                const nodeW = 132;
+                const nodeH = 54;
+                const gapX = 14;
+                const padX = 24;
+                const totalW = padX * 2 + list.length * (nodeW + gapX) - gapX;
+                const totalH = 350;
+
+                svg.setAttribute("width", totalW);
+                svg.setAttribute("height", totalH);
+                svg.setAttribute("viewBox", `0 0 ${totalW} ${totalH}`);
+
+                const rootX = totalW / 2;
+                const rootY = 40;
+                const row2Y = 165;
+                const row3Y = 290;
+
+                const ns = "http://www.w3.org/2000/svg";
+
+                // Draw edges from Root to all 28 pairs
+                list.forEach((pair, idx) => {
+                    const cx = padX + idx * (nodeW + gapX) + nodeW / 2;
+                    const path = document.createElementNS(ns, "path");
+                    const d = `M ${rootX} ${rootY + 26} C ${rootX} ${rootY + 75}, ${cx} ${row2Y - 65}, ${cx} ${row2Y - nodeH / 2}`;
+                    path.setAttribute("d", d);
+
+                    let cls = "edge";
+                    if ((step.mode === "firstEval" || step.mode === "final") && idx === 0) cls += " best";
+                    else if ((step.mode === "pruning" || step.mode === "final") && idx > 0) cls += " pruned";
+                    else if (idx === selectedPairIndex) cls += " active";
+
+                    path.setAttribute("class", cls);
+                    svg.appendChild(path);
+                });
+
+                // Draw Root Node
+                const rootG = document.createElementNS(ns, "g");
+                rootG.setAttribute("class", "node active");
+                const rRect = document.createElementNS(ns, "rect");
+                rRect.setAttribute("x", rootX - 110);
+                rRect.setAttribute("y", rootY - 26);
+                rRect.setAttribute("width", 220);
+                rRect.setAttribute("height", 52);
+                rootG.appendChild(rRect);
+
+                const rRole = document.createElementNS(ns, "text");
+                rRole.setAttribute("x", rootX);
+                rRole.setAttribute("y", rootY - 9);
+                rRole.setAttribute("class", "role");
+                rRole.textContent = "ROOT: MAX (AI Turn, Depth 3)";
+                rootG.appendChild(rRole);
+
+                const rSub = document.createElementNS(ns, "text");
+                rSub.setAttribute("x", rootX);
+                rSub.setAttribute("y", rootY + 7);
+                rSub.textContent = "28 Candidate Pairs from 3×3 Window";
+                rootG.appendChild(rSub);
+
+                const rAB = document.createElementNS(ns, "text");
+                rAB.setAttribute("x", rootX);
+                rAB.setAttribute("y", rootY + 21);
+                rAB.setAttribute("class", "score");
+                rAB.textContent =
+                    step.mode === "generate" || step.mode === "ordered" ? "α = -∞, β = +∞" :
+                        step.mode === "final" ? "★ Chosen: Pair #1 (+28)" : "α = +28, β = +∞";
+                rootG.appendChild(rAB);
+                svg.appendChild(rootG);
+
+                // Draw all 28 Pair Nodes + Depth 1/0 child indicator
+                list.forEach((pair, idx) => {
+                    const cx = padX + idx * (nodeW + gapX) + nodeW / 2;
+                    const isPruned = (step.mode === "pruning" || step.mode === "final") && idx > 0;
+                    const isBest = (step.mode === "firstEval" || step.mode === "pruning" || step.mode === "final") && idx === 0;
+
+                    // Sub-edge to Depth 0/Cutoff leaf
+                    if (isBest || isPruned) {
+                        const subLine = document.createElementNS(ns, "line");
+                        subLine.setAttribute("x1", cx);
+                        subLine.setAttribute("y1", row2Y + nodeH / 2);
+                        subLine.setAttribute("x2", cx);
+                        subLine.setAttribute("y2", row3Y - 22);
+                        subLine.setAttribute("class", isPruned ? "edge pruned" : "edge best");
+                        svg.appendChild(subLine);
+
+                        // Leaf box
+                        const leafG = document.createElementNS(ns, "g");
+                        leafG.setAttribute("class", isPruned ? "node pruned" : "node done");
+                        const lRect = document.createElementNS(ns, "rect");
+                        lRect.setAttribute("x", cx - 58);
+                        lRect.setAttribute("y", row3Y - 22);
+                        lRect.setAttribute("width", 116);
+                        lRect.setAttribute("height", 44);
+                        leafG.appendChild(lRect);
+
+                        const lTop = document.createElementNS(ns, "text");
+                        lTop.setAttribute("x", cx);
+                        lTop.setAttribute("y", row3Y - 5);
+                        lTop.setAttribute("class", isPruned ? "role min" : "role leaf");
+                        lTop.textContent = isPruned ? "β ≤ α CUTOFF" : "DEPTH 0 LEAF";
+                        leafG.appendChild(lTop);
+
+                        const lBot = document.createElementNS(ns, "text");
+                        lBot.setAttribute("x", cx);
+                        lBot.setAttribute("y", row3Y + 12);
+                        lBot.setAttribute("class", "score");
+                        lBot.textContent = isPruned ? `✂ Pruned (${pair.minimaxVal})` : "Score: +28";
+                        leafG.appendChild(lBot);
+                        svg.appendChild(leafG);
+                    }
+
+                    // Pair Node (Depth 2 - MIN)
+                    const g = document.createElementNS(ns, "g");
+                    let cls = "node";
+                    if (idx === selectedPairIndex) cls += " selected";
+                    else if (isBest) cls += " active";
+                    else if (isPruned) cls += " pruned";
+                    g.setAttribute("class", cls);
+
+                    g.addEventListener("click", () => {
+                        selectedPairIndex = idx;
+                        renderBoard();
+                        renderTree();
+                    });
+
+                    const rect = document.createElementNS(ns, "rect");
+                    rect.setAttribute("x", cx - nodeW / 2);
+                    rect.setAttribute("y", row2Y - nodeH / 2);
+                    rect.setAttribute("width", nodeW);
+                    rect.setAttribute("height", nodeH);
+                    g.appendChild(rect);
+
+                    const roleT = document.createElementNS(ns, "text");
+                    roleT.setAttribute("x", cx);
+                    roleT.setAttribute("y", row2Y - 11);
+                    roleT.setAttribute("class", "role min");
+                    roleT.textContent = `Pair #${idx + 1} (MIN)`;
+                    g.appendChild(roleT);
+
+                    const lblT = document.createElementNS(ns, "text");
+                    lblT.setAttribute("x", cx);
+                    lblT.setAttribute("y", row2Y + 4);
+                    lblT.textContent = pair.label;
+                    g.appendChild(lblT);
+
+                    const subT = document.createElementNS(ns, "text");
+                    subT.setAttribute("x", cx);
+                    subT.setAttribute("y", row2Y + 19);
+                    if (isBest) {
+                        subT.setAttribute("class", "score");
+                        subT.textContent = "★ +28 (Best)";
+                    } else if (isPruned) {
+                        subT.setAttribute("class", "score");
+                        subT.textContent = `β=${pair.minimaxVal} ≤ 28`;
+                    } else if (step.mode === "ordered") {
+                        subT.setAttribute("class", "ab");
+                        subT.textContent = `Order Score: ${pair.orderScore}`;
+                    } else {
+                        subT.setAttribute("class", "ab");
+                        subT.textContent = "Unscored";
+                    }
+                    g.appendChild(subT);
+
+                    svg.appendChild(g);
+                });
+
+                // Stats badge
+                const stats = document.getElementById("statsBadge");
+                if (step.mode === "pruning" || step.mode === "final") {
+                    stats.textContent = "1 Full Search | 27 Branches Pruned";
+                } else {
+                    stats.textContent = "28 Total Branches";
+                }
+            }
+
+            function scrollToNode(idx) {
+                const container = document.getElementById("treeScroll");
+                const targetX = Math.max(0, idx * 146 - container.clientWidth / 2 + 73);
+                container.scrollTo({ left: targetX, behavior: "smooth" });
+            }
+
+            function update() {
+                const step = steps[currentStep];
+                selectedPairIndex = step.focusIdx;
+                document.getElementById("stepTitle").textContent = step.title;
+                document.getElementById("stepDesc").textContent = step.desc;
+                document.getElementById("stepCounter").textContent = `Step ${currentStep + 1} / ${steps.length}`;
+                document.getElementById("prevBtn").disabled = currentStep === 0;
+                document.getElementById("nextBtn").disabled = currentStep === steps.length - 1;
+                renderBoard();
+                renderTree();
+                scrollToNode(selectedPairIndex);
+            }
+
+            document.getElementById("prevBtn").addEventListener("click", () => {
+                if (currentStep > 0) { currentStep--; update(); }
+            });
+            document.getElementById("nextBtn").addEventListener("click", () => {
+                if (currentStep < steps.length - 1) { currentStep++; update(); }
+            });
+            document.getElementById("resetBtn").addEventListener("click", () => {
+                currentStep = 0; update();
+            });
+
+            update();
+        });
+    </script>
+</body>
+
+</html>

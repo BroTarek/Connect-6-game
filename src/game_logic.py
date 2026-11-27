@@ -1,6 +1,8 @@
 # src/game_logic.py
 
 from src.board import Board
+from src.heuristics import create_heuristic
+
 
 class Connect6Game:
     def __init__(self, size=19, human_player='X', ai_player='O', ai_algorithm='minimax', heuristic='heuristic_1'):
@@ -21,6 +23,7 @@ class Connect6Game:
         self.ai_player = ai_player
         self.ai_algorithm = ai_algorithm  # 'minimax' or 'alpha_beta'
         self.heuristic = heuristic  # 'heuristic_1' or 'heuristic_2'
+        self.heuristic_evaluator = create_heuristic(heuristic)
         self.last_row = None
         self.last_col = None
         # Maintain a set of available moves for O(1) access instead of O(n^2) scanning
@@ -37,6 +40,7 @@ class Connect6Game:
         """
         self.ai_algorithm = algorithm
         self.heuristic = heuristic
+        self.heuristic_evaluator = create_heuristic(heuristic)
 
     def is_ai_turn(self):
         """Check if it's currently the AI's turn."""
@@ -92,109 +96,44 @@ class Connect6Game:
         
         return False
 
+    def create_ai_strategy(self, depth=2):
+        """Instantiate the configured AISearchStrategy (`MinimaxAI` or `AlphaBetaPruning`)."""
+        if self.ai_algorithm == 'alpha_beta':
+            from src.alpha_beta import AlphaBetaPruning
+            return AlphaBetaPruning(self, self.heuristic_evaluator, depth)
+        if self.ai_algorithm == 'minimax':
+            from src.minimax import MinimaxAI
+            return MinimaxAI(depth=depth)
+        raise ValueError(f"Unsupported AI algorithm: {self.ai_algorithm}")
+
     def get_ai_move(self, depth=2):
-        """
-        Get the AI's move using the specified algorithm.
-        
-        This method will call either minimax or alpha_beta algorithm to determine
-        the best move for the AI player.
-        
-        Args:
-            depth: The depth to search in the game tree (default 3)
-                  Higher depth = stronger AI but slower computation
-        
-        Returns:
-            List of moves [(x1, y1), (x2, y2)] for the AI to play.
-            For first move, returns [(x, y)] (single move).
-            Returns empty list if no valid moves available.
-        
-        TODO: This method needs to be implemented to call the actual algorithms.
-        Currently returns a placeholder that picks the first available moves.
-        """
+        """Get the AI's move using the configured search strategy."""
         available_moves = self.get_available_moves()
         if not available_moves:
             return []
-        
-        required_moves = 1 if self.first_move else 2
-        
-        # Call the appropriate AI algorithm
-        # TODO: The algorithms (minimax and alpha_beta) need to be fully implemented
-        # Currently they return placeholder values, so the AI will use a fallback strategy
-        try:
-            if self.ai_algorithm == 'minimax':
-                from src.minimax import minimax
-                # minimax returns (score, moves). Unpack properly.
-                result = minimax(self, depth, True)
-                # Debug: show raw minimax return so we can verify the moves used
-                try:
-                    print(f"[get_ai_move] minimax raw result: {result}")
-                except Exception:
-                    pass
-                if isinstance(result, tuple) and len(result) == 2:
-                    _, best_moves = result
-                else:
-                    best_moves = result
 
-                # If algorithm returns valid moves, use them
-                if best_moves and len(best_moves) == required_moves:
-                    # Validate that all moves are still available
-                    if all(move in available_moves for move in best_moves):
-                        # Display chosen moves (1-based coords for user clarity)
-                        try:
-                            disp = [(m[0] + 1, m[1] + 1) for m in best_moves]
-                            print(f"AI chooses: {disp}")
-                        except Exception:
-                            print(f"AI chooses: {best_moves}")
-                        return best_moves
-            elif self.ai_algorithm == 'alpha_beta':
-                from src.alpha_beta import AlphaBetaPruning
-                best_moves = AlphaBetaPruning(self, self.heuristic,depth).find_best_move(self)
-                # If algorithm returns valid moves, use them
-                if best_moves and len(best_moves) == required_moves:
-                    # Validate that all moves are still available
-                    if all(move in available_moves for move in best_moves):
-                        try:
-                            disp = [(m[0] + 1, m[1] + 1) for m in best_moves]
-                            print(f"AI chooses: {disp}")
-                        except Exception:
-                            print(f"AI chooses: {best_moves}")
-                        return best_moves
-        except Exception as e:
-            # If algorithm implementation has errors, fall back to simple strategy
-            print(f"AI algorithm error (using fallback): {e}")
-        
-        # Fallback: If algorithms are not implemented or return invalid moves,
-        # use a simple strategy (pick first available moves)
-        # TODO: Remove this fallback once algorithms are fully implemented
-        chosen = available_moves[:required_moves]
+        required_moves = 1 if self.first_move else 2
+
         try:
-            disp = [(m[0] + 1, m[1] + 1) for m in chosen]
-            print(f"AI chooses (fallback): {disp}")
-        except Exception:
-            print(f"AI chooses (fallback): {chosen}")
+            strategy = self.create_ai_strategy(depth=depth)
+            best_moves = strategy.find_best_move(self)
+
+            if best_moves and len(best_moves) == required_moves:
+                if all(move in available_moves for move in best_moves):
+                    disp = [(m[0] + 1, m[1] + 1) for m in best_moves]
+                    print(f"AI chooses: {disp}")
+                    return best_moves
+        except Exception as e:
+            print(f"AI algorithm error (using fallback): {e}")
+
+        chosen = available_moves[:required_moves]
+        disp = [(m[0] + 1, m[1] + 1) for m in chosen]
+        print(f"AI chooses (fallback): {disp}")
         return chosen
 
     def evaluate_position(self):
-        """
-        Evaluate the current board position from the AI's perspective.
-        
-        This is a heuristic function that should return:
-        - Positive values: Good for AI (maximizing player)
-        - Negative values: Good for human (minimizing player)
-        - Zero: Neutral position
-        
-        Returns:
-            A numerical score representing the position's value.
-        """
-        from src.heuristics import heuristic_1, heuristic_2
-        
-        if self.heuristic == 'heuristic_1':
-            return heuristic_1(self)
-        elif self.heuristic == 'heuristic_2':
-            return heuristic_2(self)
-        else:
-            # Default to heuristic_1 if invalid
-            return heuristic_1(self)
+        """Evaluate the current board position from the AI's perspective."""
+        return self.heuristic_evaluator.evaluate(self)
 
     def make_move_copy(self, moves, player):
         """

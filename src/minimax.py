@@ -1,7 +1,10 @@
 # src/minimax.py
+"""Object-oriented Minimax search strategy for Connect-6."""
+
 import time
 from itertools import combinations
-from src.constants import MAX_CANDIDATES
+import src.constants as c
+from src.ai_base import AISearchStrategy
 
 INF = 10**9
 DEFAULT_RADIUS = 2
@@ -14,101 +17,19 @@ _LEAF_LIMIT = 10000.0
 
 
 def _chebyshev(a, b):
-    (x1, y1), (x2, y2) = a, b
-    return max(abs(x1 - x2), abs(y1 - y2))
+    return AISearchStrategy.chebyshev(a, b)
 
-
-def get_candidate_moves(game, radius=DEFAULT_RADIUS):
-    """Return candidate empty cells for search.
-
-    This implementation reuses `game.get_available_moves()` and the board
-    rather than scanning the whole file independently.
-    """
-    grid = game.board.grid
-    n = game.board.size
-
-    # Build occupied cells set from the grid (small cost, still simpler than
-    # reimplementing board bookkeeping here). Use available_moves for final
-    # filtering so we never return invalid cells.
-    occupied = {(i, j) for i in range(n) for j in range(n) if grid[i][j] != '.'}
-    avail = set(game.get_available_moves())
-
-    # If no occupied cells, return all available moves (first moves)
-    if not occupied:
-        return sorted(avail)
-
-    candidates = set()
-    for c in avail:
-        # include empty cell if it's within chebyshev `radius` of any occupied cell
-        for o in occupied:
-            if _chebyshev(c, o) <= radius:
-                candidates.add(c)
-                break
-
-    if not candidates:
-        return sorted(avail)
-    return sorted(candidates)
-
-
-def get_candidate_moves_near_last_human(game, radius=HUMAN_FOCUS_RADIUS):
-    """Prefer cells near the last human move.
-
-    The game may supply different attributes for last human moves; prefer
-    `last_human_moves` if present (set/list), otherwise fall back to
-    `last_row`/`last_col`. Returns a set of coords.
-    """
-    grid = game.board.grid
-    n = game.board.size
-    avail = set(game.get_available_moves())
-
-    origins = set()
-    if hasattr(game, "last_human_moves") and game.last_human_moves:
-        origins.update(game.last_human_moves)
-    elif getattr(game, "last_row", None) is not None and getattr(game, "last_col", None) is not None:
-        origins.add((game.last_row, game.last_col))
-
-    if not origins:
-        return set()
-
-    candidates = set()
-    for c in avail:
-        for o in origins:
-            if _chebyshev(c, o) <= radius:
-                candidates.add(c)
-                break
-
-    return candidates
 
 def board_state_key(game):
-    grid = game.board.grid
-    rows = [''.join(row) for row in grid]
+    """Return a deterministic string key representing the board and turn state."""
+    rows = [''.join(row) for row in game.board.grid]
     return '|'.join(rows) + f":{game.current_player}:{int(game.first_move)}"
 
+
 def is_win_after_placement(sim_game, coord):
+    """Return True if placing at `coord` wins the game in `sim_game`."""
     x, y = coord
     return sim_game.check_winner(x, y)
-
-# small caches to reduce repeated expensive ops
-_SIM_CACHE = {}
-_PROBE_CACHE = {}
-
-def simulate(game, moves, player):
-    """Use the game's `make_move_copy` (already provided in `game_logic`) and cache results."""
-    bk = board_state_key(game)
-    key = (bk, tuple(moves), player)
-    if key in _SIM_CACHE:
-        return _SIM_CACHE[key]
-    child = game.make_move_copy(moves, player)
-    _SIM_CACHE[key] = child
-    return child
-
-def probe_score_cached(game):
-    bk = board_state_key(game)
-    if bk in _PROBE_CACHE:
-        return _PROBE_CACHE[bk]
-    val = game.evaluate_position()
-    _PROBE_CACHE[bk] = val
-    return val
 
 
 def _clamp_for_ordering(v: float) -> float:
@@ -138,191 +59,188 @@ def _clamp_for_leaf(v: float) -> float:
     except Exception:
         return 0.0
 
-def minimax(game, depth, maximizing_player, radius=DEFAULT_RADIUS,
-            max_candidates=MAX_CANDIDATES, max_second_per_first=6, verbose=True):
-    """
-    Minimal minimax:
-      - depth: recursion depth (0 == evaluate_position)
-      - maximizing_player: True if root is maximizing (AI)
-      - verbose: prints stats to console (time, depth, node count)
-    Behavior change: if game.last_human_moves exists, restrict candidates to Chebyshev distance
-    HUMAN_FOCUS_RADIUS from the last human stone(s). If that produces no candidates, fall back.
-    """
-    t0 = time.time()
-    required = 2
-    root_player = game.current_player
 
-    avail = list(game.get_available_moves())
-    if len(avail) <= required:
-        elapsed = time.time() - t0
-        stats = {"time": elapsed, "depth": depth, "nodes": 0}
-        setattr(game, "_last_minimax_stats", stats)
-        if verbose:
-            print(f"[minimax] depth={depth} nodes={0} time={elapsed:.4f}s (console)")
-        return 0, avail[:required]
+class MinimaxAI(AISearchStrategy):
+    """Minimax game-tree search strategy with threat detection and beam ordering."""
 
-    # First, try to constrain candidates to near last human moves (distance HUMAN_FOCUS_RADIUS)
-    focused_candidates = get_candidate_moves_near_last_human(game, HUMAN_FOCUS_RADIUS)
+    def __init__(
+        self,
+        depth=c.MINI_MAX_DEPTH,
+        radius=DEFAULT_RADIUS,
+        max_candidates=c.MAX_CANDIDATES,
+        max_second_per_first=6,
+        verbose=True,
+    ):
+        self.depth = depth
+        self.radius = radius
+        self.max_candidates = max_candidates
+        self.max_second_per_first = max_second_per_first
+        self.verbose = verbose
+        self.node_count = 0
+        self.last_stats = {}
+        self._sim_cache = {}
+        self._probe_cache = {}
 
-    # ROOT: scan the board for any opponent open-5 (or open-4) sequences that
-    # already exist and would allow an immediate win next turn. If found,
-    # compute blocking cells and prioritize them. This detects "you already
-    # have 5 in a row" cases where we must block immediately.
+    def find_best_move(self, game):
+        """Return the best move list for `game` using Minimax."""
+        _, best_moves = self.search(game, maximizing_player=True)
+        return best_moves
 
+    @staticmethod
+    def get_candidate_moves(game, radius=DEFAULT_RADIUS):
+        """Return empty cells within Chebyshev `radius` of any occupied cell."""
+        grid = game.board.grid
+        n = game.board.size
+        occupied = {(i, j) for i in range(n) for j in range(n) if grid[i][j] != c.EMPTY}
+        avail = set(game.get_available_moves())
 
-    # ROOT: Detect immediate opponent threats by simulation (simpler than scanning runs)
-    opponent = 'O' if root_player == 'X' else 'X'
-    immediate_blockers = set()
-    
-    # Check if opponent can win in 1 move (requires immediate block)
-    # We only check this on available moves to be safe and simple.
-    for m in avail:
-        try:
-            # Simulate opponent move
-            sim = simulate(game, [m], opponent)
-            if is_win_after_placement(sim, m):
-                immediate_blockers.add(m)
-        except Exception:
-            pass
-            
-    if immediate_blockers:
-        if verbose:
-            print(f"[minimax] Found immediate threats (blocking required): {sorted(immediate_blockers)}")
-        # If immediate threats exist, we MUST play them. 
-        # Since we play 2 stones, we can block up to 2 distinct threats.
-        chosen_blockers = sorted(immediate_blockers)[:required]
-        # Return immediately if we found forced blocks
-        elapsed = time.time() - t0
-        setattr(game, "_last_minimax_stats", {"time": elapsed, "depth": depth, "nodes": 0})
-        if verbose:
-             print(f"[minimax] Returning blockers: {chosen_blockers}")
-        return 0, chosen_blockers
-    if focused_candidates:
-        # keep order deterministic and only consider those actually available
-        candidates = [c for c in sorted(focused_candidates) if c in avail]
-    else:
-        # fallback to general candidate selection
-        candidates = get_candidate_moves(game, radius)
-        candidates = [c for c in candidates if c in avail]
+        if not occupied:
+            return sorted(avail)
 
-    if not candidates:
-        candidates = avail
+        candidates = {
+            cell
+            for cell in avail
+            if any(AISearchStrategy.chebyshev(cell, occ) <= radius for occ in occupied)
+        }
+        return sorted(candidates) if candidates else sorted(avail)
 
-    # Bias candidate ordering toward proximity to the last human move(s)
-    origins = set()
-    if hasattr(game, "last_human_moves") and game.last_human_moves:
-        origins.update(game.last_human_moves)
-    elif getattr(game, "last_row", None) is not None and getattr(game, "last_col", None) is not None:
-        origins.add((game.last_row, game.last_col))
+    @staticmethod
+    def _human_origins(game):
+        """Return the set of recent human move coordinates on `game`."""
+        origins = set()
+        if hasattr(game, "last_human_moves") and game.last_human_moves:
+            origins.update(game.last_human_moves)
+        elif getattr(game, "last_row", None) is not None and getattr(game, "last_col", None) is not None:
+            origins.add((game.last_row, game.last_col))
+        return origins
 
-    def _dist_to_orig(c):
+    @classmethod
+    def get_candidate_moves_near_last_human(cls, game, radius=HUMAN_FOCUS_RADIUS):
+        """Return empty cells within Chebyshev `radius` of the last human move(s)."""
+        origins = cls._human_origins(game)
         if not origins:
-            return float('inf')
-        return min(_chebyshev(c, o) for o in origins)
+            return set()
 
-    # Pre-score candidates by a combination of proximity and cached probe score.
-    # Prefer smaller distance and higher probe score. Clamp probe scores so
-    # extremely large evaluations don't completely dominate ordering.
-    scored = []
-    for c in candidates:
-        d = _dist_to_orig(c)
-        # Use cached probe score on the single-move child as an approximation
+        avail = set(game.get_available_moves())
+        return {
+            cell
+            for cell in avail
+            if any(AISearchStrategy.chebyshev(cell, origin) <= radius for origin in origins)
+        }
+
+    def simulate(self, game, moves, player):
+        """Return a cached simulated Connect6Game copy after applying `moves`."""
+        bk = board_state_key(game)
+        key = (bk, tuple(moves), player)
+        if key not in self._sim_cache:
+            self._sim_cache[key] = game.make_move_copy(moves, player)
+        return self._sim_cache[key]
+
+    def probe_score(self, game):
+        """Return a cached heuristic evaluation score for `game`."""
+        bk = board_state_key(game)
+        if bk not in self._probe_cache:
+            self._probe_cache[bk] = game.evaluate_position()
+        return self._probe_cache[bk]
+
+    def _select_candidates(self, game, avail):
+        """Select focused candidates near human moves or general board candidates."""
+        avail_set = set(avail)
+        focused = self.get_candidate_moves_near_last_human(game, HUMAN_FOCUS_RADIUS)
+        if focused:
+            candidates = [cell for cell in sorted(focused) if cell in avail_set]
+        else:
+            candidates = [cell for cell in self.get_candidate_moves(game, self.radius) if cell in avail_set]
+
+        if not candidates:
+            candidates = list(avail)
+        return candidates
+
+    def _order_root_candidates(self, game, candidates, root_player):
+        """Order root candidates by proximity to last human moves and probe score."""
+        origins = self._human_origins(game)
+
+        def _dist_to_orig(cell):
+            if not origins:
+                return float('inf')
+            return min(self.chebyshev(cell, o) for o in origins)
+
+        scored = []
+        for cell in candidates:
+            d = _dist_to_orig(cell)
+            try:
+                child = self.simulate(game, [cell], root_player)
+                ps = self.probe_score(child)
+            except Exception:
+                ps = 0
+            ps_order = _clamp_for_ordering(ps)
+            scored.append((d, -ps_order, ps, cell))
+
+        scored.sort()
+        ordered = [t[3] for t in scored]
+        if self.max_candidates and len(ordered) > self.max_candidates:
+            ordered = ordered[:self.max_candidates]
+        return ordered
+
+    def _find_single_move_wins(self, game, moves, player):
+        """Return the set of single moves in `moves` that immediately win for `player`."""
+        wins = set()
+        for m in moves:
+            try:
+                sim = self.simulate(game, [m], player)
+                if is_win_after_placement(sim, m):
+                    wins.add(m)
+            except Exception:
+                pass
+        return wins
+
+    def _find_two_move_threats(self, game, avail, candidates, opponent):
+        """Detect forced two-move opponent wins and return blocking cells."""
+        blocking_moves = set()
+
         try:
-            child = simulate(game, [c], root_player)
-            ps = probe_score_cached(child)
-        except Exception:
-            ps = 0
-        ps_order = _clamp_for_ordering(ps)
-        scored.append((d, -ps_order, ps, c))
-    scored.sort()
-    candidates = [t[3] for t in scored]
-    if max_candidates and len(candidates) > max_candidates:
-        candidates = candidates[:max_candidates]
-    opponent = 'O' if root_player == 'X' else 'X'
-    req_opp = 2
-
-    blocking_moves = set()
-
-    # Check single-move opponent wins across all available moves (cheap)
-    try:
-        for b in avail:
-            child_b = simulate(game, [b], opponent)
-            if is_win_after_placement(child_b, b):
-                blocking_moves.add(b)
-    except Exception:
-        pass
-
-    # If opponent requires 2 moves, check candidate pairs for immediate wins
-    if req_opp == 2 and not blocking_moves:
-        try:
-            # limit pair checking to the (pre-scored) candidates to reduce cost
-            from itertools import combinations as _comb
-            for a, b in _comb([c for c in candidates], 2):
-                child_ab = simulate(game, [a, b], opponent)
+            for a, b in combinations(candidates, 2):
+                child_ab = self.simulate(game, [a, b], opponent)
                 if is_win_after_placement(child_ab, a) or is_win_after_placement(child_ab, b):
                     blocking_moves.add(a)
                     blocking_moves.add(b)
         except Exception:
             pass
 
-    # More thorough two-move opponent win detection (targeted):
-    # For each possible first opponent move `a`, simulate it and then check
-    # second moves `b` among nearby available cells (using chebyshev
-    # locality) to detect a forced two-move win. This reduces the
-    # full O(n^2) pair scan while catching many practical threats.
-    if req_opp == 2 and not blocking_moves:
-        try:
-            for a in avail:
-                # simulate opponent placing `a`
-                child_a = simulate(game, [a], opponent)
-                # quickly skip if placing `a` already loses (shouldn't)
-                if is_win_after_placement(child_a, a):
-                    blocking_moves.add(a)
-                    continue
-
-                # Consider b's that are within HUMAN_FOCUS_RADIUS of `a` or
-                # within HUMAN_FOCUS_RADIUS of any last human move (if present).
-                local_avail2 = list(child_a.get_available_moves())
-                origins2 = set()
-                if hasattr(game, "last_human_moves") and game.last_human_moves:
-                    origins2.update(game.last_human_moves)
-                elif getattr(game, "last_row", None) is not None and getattr(game, "last_col", None) is not None:
-                    origins2.add((game.last_row, game.last_col))
-
-                # build candidate b-list: nearby to `a` or to known origins
-                b_candidates = []
-                for b in local_avail2:
-                    if _chebyshev(b, a) <= HUMAN_FOCUS_RADIUS:
-                        b_candidates.append(b)
-                        continue
-                    for o in origins2:
-                        if _chebyshev(b, o) <= HUMAN_FOCUS_RADIUS:
-                            b_candidates.append(b)
-                            break
-
-                # check second moves
-                for b in b_candidates:
-                    child_ab = simulate(child_a, [b], opponent)
-                    if is_win_after_placement(child_ab, b) or is_win_after_placement(child_ab, a):
+        if not blocking_moves:
+            try:
+                origins = self._human_origins(game)
+                for a in avail:
+                    child_a = self.simulate(game, [a], opponent)
+                    if is_win_after_placement(child_a, a):
                         blocking_moves.add(a)
-                        blocking_moves.add(b)
-                        break
-                if blocking_moves:
-                    break
-        except Exception:
-            pass
+                        continue
 
-        # If we still found nothing, and the board is not too large, fall back
-        # to a full pair scan among all available moves (more expensive but
-        # catches threats our locality heuristic missed). Limit to moderate
-        # boards to avoid pathological slowdowns.
-        if req_opp == 2 and not blocking_moves and len(avail) <= 120:
+                    local_avail2 = list(child_a.get_available_moves())
+                    b_candidates = [
+                        b for b in local_avail2
+                        if self.chebyshev(b, a) <= HUMAN_FOCUS_RADIUS
+                        or any(self.chebyshev(b, o) <= HUMAN_FOCUS_RADIUS for o in origins)
+                    ]
+
+                    for b in b_candidates:
+                        child_ab = self.simulate(child_a, [b], opponent)
+                        if is_win_after_placement(child_ab, b) or is_win_after_placement(child_ab, a):
+                            blocking_moves.add(a)
+                            blocking_moves.add(b)
+                            break
+                    if blocking_moves:
+                        break
+            except Exception:
+                pass
+
+        if not blocking_moves and len(avail) <= 120:
             try:
                 for a in avail:
                     for b in avail:
                         if b == a:
                             continue
-                        child_ab = simulate(game, [a, b], opponent)
+                        child_ab = self.simulate(game, [a, b], opponent)
                         if is_win_after_placement(child_ab, a) or is_win_after_placement(child_ab, b):
                             blocking_moves.add(a)
                             blocking_moves.add(b)
@@ -332,147 +250,183 @@ def minimax(game, depth, maximizing_player, radius=DEFAULT_RADIUS,
             except Exception:
                 pass
 
-    if blocking_moves and verbose:
-        print(f"[minimax] Detected opponent immediate/two-move threat. Blocking moves: {sorted(blocking_moves)}")
+        return blocking_moves
 
-    if blocking_moves:
-        # If we detected explicit blocking moves (single or two-move threats),
-        # return them immediately as the AI's chosen move(s) so the AI will
-        # block reliably rather than depending on ordering/probing.
-        chosen_blockers = sorted(blocking_moves)[:required]
-        if chosen_blockers:
-            if verbose:
-                print(f"[minimax] Returning detected blocking moves as best moves: {chosen_blockers}")
-            elapsed = time.time() - t0
-            setattr(game, "_last_minimax_stats", {"time": elapsed, "depth": depth, "nodes": 0})
-            return 0, chosen_blockers
+    def _record_stats(self, game, start_time, nodes):
+        """Store search statistics on both the instance and the game object."""
+        elapsed = time.time() - start_time
+        stats = {"time": elapsed, "depth": self.depth, "nodes": nodes}
+        self.last_stats = stats
+        setattr(game, "_last_minimax_stats", stats)
+        return elapsed
 
-        # Reorder candidates so blocking moves come first (dedup while preserving order)
-        new_candidates = []
-        for m in candidates:
-            if m in blocking_moves and m not in new_candidates:
-                new_candidates.append(m)
-        for m in candidates:
-            if m not in new_candidates:
-                new_candidates.append(m)
-        candidates = new_candidates
-
-    # Step 3: Check for immediate AI win (1 move)
-    for a in candidates:
-        child = simulate(game, [a], root_player)
-        if is_win_after_placement(child, a):
-             # Found a winning move. Return it (pair it with any other move)
-            elapsed = time.time() - t0
-            setattr(game, "_last_minimax_stats", {"time": elapsed, "depth": depth, "nodes": 1})
-            if verbose:
-                print(f"[minimax] Found immediate win: {a}")
-            
-            # Find a second valid move to complete the pair
-            second = None
-            for b in candidates:
-                if b != a: second = b; break
-            if not second:
-                for b in avail:
-                     if b != a: second = b; break
-            
-            return INF, [a, second] if second else [a]
-
-    node_count = 0
-
-    def recurse(node_game, depth_left, maximizing):
-        nonlocal node_count
-        node_count += 1
+    def _recurse(self, node_game, depth_left, maximizing):
+        """Recursive Minimax evaluation returning (best_score, best_moves)."""
+        self.node_count += 1
 
         if node_game.is_draw():
             return 0, None
         if depth_left == 0:
-            v = probe_score_cached(node_game)
-            # Preserve exact infinities (winning positions) but clamp ordinary evals
-            return _clamp_for_leaf(v), None
+            return _clamp_for_leaf(self.probe_score(node_game)), None
 
-        req = 2
         local_avail = list(node_game.get_available_moves())
-
-        # same focused behavior recursively: prefer to keep search local to last human moves
-        focused = get_candidate_moves_near_last_human(node_game, HUMAN_FOCUS_RADIUS)
-        if focused:
-            local_cand = [c for c in sorted(focused) if c in local_avail]
-        else:
-            local_cand = get_candidate_moves(node_game, radius)
-            local_cand = [c for c in local_cand if c in local_avail]
+        local_cand = self._select_candidates(node_game, local_avail)
+        if self.max_candidates and len(local_cand) > self.max_candidates:
+            local_cand = local_cand[:self.max_candidates]
 
         if not local_cand:
-            local_cand = local_avail
-        if max_candidates and len(local_cand) > max_candidates:
-            local_cand = local_cand[:max_candidates]
-
-        if not local_cand:
-            return probe_score_cached(node_game), None
+            return self.probe_score(node_game), None
 
         best_score = -INF if maximizing else INF
         best_moves = None
 
-        # Pair generation and scoring (Simpler, unified approach)
-        pair_candidates = []
         if len(local_cand) >= 2:
             pair_candidates = list(combinations(local_cand, 2))
         else:
-            # Handle edge case where we have < 2 candidates but need 2 moves
-            if local_cand:
-                a = local_cand[0]
-                for b in local_avail:
-                    if b != a:
-                        pair_candidates.append((a, b))
-        
-        # Score pairs for sorting (Beam search preparation)
+            a = local_cand[0]
+            pair_candidates = [(a, b) for b in local_avail if b != a]
+
         scored_pairs = []
         for a, b in pair_candidates:
-            # Check for immediate wins first (optimization)
-            child_ab = simulate(node_game, [a, b], node_game.current_player)
+            child_ab = self.simulate(node_game, [a, b], node_game.current_player)
             if is_win_after_placement(child_ab, b) or is_win_after_placement(child_ab, a):
                 return (INF if maximizing else -INF), [a, b]
-            
-            ps = probe_score_cached(child_ab)
+            ps = self.probe_score(child_ab)
             scored_pairs.append((_clamp_for_ordering(ps), (a, b), child_ab))
-        
+
         scored_pairs.sort(reverse=maximizing, key=lambda t: t[0])
 
-        max_pairs = max_second_per_first * max(1, len(local_cand))
+        max_pairs = self.max_second_per_first * max(1, len(local_cand))
         for i, (_, (a, b), child_ab) in enumerate(scored_pairs):
             if i >= max_pairs:
                 break
-            sc, _ = recurse(child_ab, depth_left - 1, not maximizing)
-            if maximizing:
-                if sc > best_score:
-                    best_score = sc
-                    best_moves = [a, b]
-            else:
-                if sc < best_score:
-                    best_score = sc
-                    best_moves = [a, b]
+            sc, _ = self._recurse(child_ab, depth_left - 1, not maximizing)
+            if (maximizing and sc > best_score) or (not maximizing and sc < best_score):
+                best_score = sc
+                best_moves = [a, b]
 
         return best_score, best_moves
 
-    best_score, best_moves = recurse(game, depth, maximizing_player)
+    def search(self, game, maximizing_player=True):
+        """Execute Minimax search and return `(best_score, best_moves)`."""
+        t0 = time.time()
+        required = 1 if game.first_move else 2
+        root_player = game.current_player
+        opponent = self.opponent_of(root_player)
+        avail = list(game.get_available_moves())
 
-    elapsed = time.time() - t0
-    stats = {"time": elapsed, "depth": depth, "nodes": node_count}
-    setattr(game, "_last_minimax_stats", stats)
+        if len(avail) <= required:
+            elapsed = self._record_stats(game, t0, 0)
+            if self.verbose:
+                print(f"[minimax] depth={self.depth} nodes={0} time={elapsed:.4f}s (console)")
+            return 0, avail[:required]
 
-    # PRINT STATS TO CONSOLE (explicit)
-    if verbose:
-        # console-only line (no GUI dialogs)
-        print(f"[minimax] depth={depth} nodes={node_count} time={elapsed:.4f}s (console)")
+        # Check immediate 1-move opponent threats across all available cells
+        immediate_blockers = self._find_single_move_wins(game, avail, opponent)
+        if immediate_blockers:
+            if self.verbose:
+                print(f"[minimax] Found immediate threats (blocking required): {sorted(immediate_blockers)}")
+            chosen_blockers = sorted(immediate_blockers)[:required]
+            self._record_stats(game, t0, 0)
+            if self.verbose:
+                print(f"[minimax] Returning blockers: {chosen_blockers}")
+            return 0, chosen_blockers
 
-    req_now = 2
-    avail_now = list(game.get_available_moves())
-    if not best_moves or len(best_moves) != req_now or any(m not in avail_now for m in best_moves):
-        chosen = []
-        for c in avail_now:
-            if c not in chosen:
-                chosen.append(c)
-            if len(chosen) == req_now:
-                break
-        return best_score, chosen
+        candidates = self._select_candidates(game, avail)
+        candidates = self._order_root_candidates(game, candidates, root_player)
 
-    return best_score, best_moves
+        # Check 2-move opponent threats when playing 2-stone turns
+        if required == 2:
+            blocking_moves = self._find_single_move_wins(game, avail, opponent)
+            if not blocking_moves:
+                blocking_moves = self._find_two_move_threats(game, avail, candidates, opponent)
+            if blocking_moves:
+                if self.verbose:
+                    print(f"[minimax] Detected opponent immediate/two-move threat. Blocking moves: {sorted(blocking_moves)}")
+                chosen_blockers = sorted(blocking_moves)[:required]
+                if chosen_blockers:
+                    if self.verbose:
+                        print(f"[minimax] Returning detected blocking moves as best moves: {chosen_blockers}")
+                    self._record_stats(game, t0, 0)
+                    return 0, chosen_blockers
+
+        # Check immediate 1-move AI win
+        for a in candidates:
+            child = self.simulate(game, [a], root_player)
+            if is_win_after_placement(child, a):
+                self._record_stats(game, t0, 1)
+                if self.verbose:
+                    print(f"[minimax] Found immediate win: {a}")
+                if required == 1:
+                    return INF, [a]
+                second = next((b for b in candidates if b != a), None)
+                if second is None:
+                    second = next((b for b in avail if b != a), None)
+                return INF, [a, second] if second else [a]
+
+        if required == 1:
+            center = (game.board.size // 2, game.board.size // 2)
+            first_choice = [center] if center in avail else avail[:1]
+            self._record_stats(game, t0, 1)
+            return 0, first_choice
+
+        self.node_count = 0
+        best_score, best_moves = self._recurse(game, self.depth, maximizing_player)
+        elapsed = self._record_stats(game, t0, self.node_count)
+
+        if self.verbose:
+            print(f"[minimax] depth={self.depth} nodes={self.node_count} time={elapsed:.4f}s (console)")
+
+        avail_now = set(game.get_available_moves())
+        if not best_moves or len(best_moves) != required or any(m not in avail_now for m in best_moves):
+            return best_score, list(avail)[:required]
+
+        return best_score, best_moves
+
+
+# Shared caches and backward-compatible module-level helper functions
+_SIM_CACHE = {}
+_PROBE_CACHE = {}
+
+
+def get_candidate_moves(game, radius=DEFAULT_RADIUS):
+    return MinimaxAI.get_candidate_moves(game, radius=radius)
+
+
+def get_candidate_moves_near_last_human(game, radius=HUMAN_FOCUS_RADIUS):
+    return MinimaxAI.get_candidate_moves_near_last_human(game, radius=radius)
+
+
+def simulate(game, moves, player):
+    bk = board_state_key(game)
+    key = (bk, tuple(moves), player)
+    if key not in _SIM_CACHE:
+        _SIM_CACHE[key] = game.make_move_copy(moves, player)
+    return _SIM_CACHE[key]
+
+
+def probe_score_cached(game):
+    bk = board_state_key(game)
+    if bk not in _PROBE_CACHE:
+        _PROBE_CACHE[bk] = game.evaluate_position()
+    return _PROBE_CACHE[bk]
+
+
+def minimax(
+    game,
+    depth,
+    maximizing_player,
+    radius=DEFAULT_RADIUS,
+    max_candidates=c.MAX_CANDIDATES,
+    max_second_per_first=6,
+    verbose=True,
+):
+    """Run Minimax search using `MinimaxAI` (backward-compatible entry point)."""
+    solver = MinimaxAI(
+        depth=depth,
+        radius=radius,
+        max_candidates=max_candidates,
+        max_second_per_first=max_second_per_first,
+        verbose=verbose,
+    )
+    return solver.search(game, maximizing_player=maximizing_player)

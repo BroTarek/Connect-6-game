@@ -1,7 +1,14 @@
 # tests/test_heuristics.py
 import unittest
 from src.game_logic import Connect6Game
-from src.heuristics import heuristic_1, heuristic_2
+from src.heuristics import (
+    BaseHeuristic,
+    SequenceHeuristic,
+    ThreatAndCenterHeuristic,
+    create_heuristic,
+    heuristic_1,
+    heuristic_2,
+)
 
 
 class TestHeuristics(unittest.TestCase):
@@ -131,6 +138,33 @@ class TestHeuristics(unittest.TestCase):
         self.game.set_ai_config('minimax', 'heuristic_2')
         score_2 = self.game.evaluate_position()
         self.assertEqual(score_2, heuristic_2(self.game))
+
+    def test_heuristic_2_closed_five_not_scored_as_open_threat(self):
+        """A 5-in-a-row blocked on both ends must not receive the open-threat bonus."""
+        # Blocked 5-in-a-row for AI: X at (4, 1) and (4, 7), O at (4, 2)..(4, 6)
+        # Cells (4, 0) and (4, 8) remain empty (where the old overshoot bug looked).
+        self.game.board.place_move(4, 1, 'X')
+        self.game.board.place_move(4, 7, 'X')
+        for y in range(2, 7):
+            self.game.board.place_move(4, y, 'O')
+
+        score = heuristic_2(self.game)
+        # 5 stones * weight 1000 = 5000 (plus small center bonuses); must be well below 5000 + 7000
+        self.assertLess(score, 6000)
+
+    def test_oop_heuristic_hierarchy_and_factory(self):
+        """Test BaseHeuristic subclasses and create_heuristic factory."""
+        h1 = create_heuristic('heuristic_1')
+        h2 = create_heuristic('heuristic_2')
+        self.assertIsInstance(h1, BaseHeuristic)
+        self.assertIsInstance(h1, SequenceHeuristic)
+        self.assertIsInstance(h2, BaseHeuristic)
+        self.assertIsInstance(h2, ThreatAndCenterHeuristic)
+
+        for y in range(3):
+            self.game.board.place_move(4, y, 'O')
+        self.assertEqual(h1.evaluate(self.game), heuristic_1(self.game))
+        self.assertEqual(h2.evaluate(self.game), heuristic_2(self.game))
 
 
 if __name__ == '__main__':

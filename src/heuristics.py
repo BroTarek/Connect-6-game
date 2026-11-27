@@ -1,175 +1,144 @@
 # src/heuristics.py
-
 """
-Heuristic functions for evaluating Connect 6 game positions.
+Object-oriented heuristic evaluation strategies for Connect-6 game positions.
 
-These functions analyze the board and return a score representing
-the position's value from the AI's perspective.
+Each evaluation approach inherits from `BaseHeuristic` and implements
+`evaluate(game_state)`, returning a score from the AI's perspective
+(positive = favorable for AI, negative = favorable for human).
 """
+
+from abc import ABC, abstractmethod
+import src.constants as c
+
+
+class BaseHeuristic(ABC):
+    """Abstract base class for Connect-6 board evaluation heuristics."""
+
+    DIRECTIONS = ((1, 0), (0, 1), (1, 1), (1, -1))
+    SEQUENCE_WEIGHTS = {2: 1, 3: 10, 4: 100, 5: 1000}
+
+    @abstractmethod
+    def evaluate(self, game_state):
+        """Evaluate `game_state` and return a numerical score from the AI's perspective."""
+
+    @staticmethod
+    def _scan_line(grid, size, i, j, dx, dy, player):
+        """Count contiguous stones of `player` through (i, j) along (dx, dy).
+
+        Returns:
+            tuple: (count, (end1_x, end1_y), (end2_x, end2_y)) where the two
+            endpoints are the exact cells immediately beyond each end of the run.
+        """
+        count = 1
+
+        x, y = i + dx, j + dy
+        while 0 <= x < size and 0 <= y < size and grid[x][y] == player:
+            count += 1
+            x += dx
+            y += dy
+        end1 = (x, y)
+
+        x, y = i - dx, j - dy
+        while 0 <= x < size and 0 <= y < size and grid[x][y] == player:
+            count += 1
+            x -= dx
+            y -= dy
+        end2 = (x, y)
+
+        return count, end1, end2
+
+    @staticmethod
+    def _is_open_cell(grid, size, coord):
+        """Return True if `coord` is in bounds and currently empty."""
+        x, y = coord
+        return 0 <= x < size and 0 <= y < size and grid[x][y] == c.EMPTY
+
+
+class SequenceHeuristic(BaseHeuristic):
+    """First heuristic: scores sequences of 2-5 consecutive stones."""
+
+    def evaluate(self, game_state):
+        score = 0
+        grid = game_state.board.grid
+        size = game_state.board.size
+
+        for i in range(size):
+            for j in range(size):
+                player = grid[i][j]
+                if player == c.EMPTY:
+                    continue
+
+                is_ai = player == game_state.ai_player
+                for dx, dy in self.DIRECTIONS:
+                    count, _, _ = self._scan_line(grid, size, i, j, dx, dy, player)
+                    if 2 <= count <= 5:
+                        weight = self.SEQUENCE_WEIGHTS.get(count, 0)
+                        score += weight if is_ai else -weight
+
+        return score
+
+
+class ThreatAndCenterHeuristic(BaseHeuristic):
+    """Second heuristic: evaluates sequences, open-4/5 threats, and center control."""
+
+    THREAT_WEIGHT = 7000
+    OPEN4_WEIGHT = 1500
+    CENTER_BONUS_FACTOR = 0.1
+
+    def evaluate(self, game_state):
+        score = 0
+        grid = game_state.board.grid
+        size = game_state.board.size
+        center = size // 2
+
+        for i in range(size):
+            for j in range(size):
+                player = grid[i][j]
+                if player == c.EMPTY:
+                    continue
+
+                is_ai = player == game_state.ai_player
+                distance_from_center = abs(i - center) + abs(j - center)
+                center_bonus = (size - distance_from_center) * self.CENTER_BONUS_FACTOR
+                score += center_bonus if is_ai else -center_bonus
+
+                for dx, dy in self.DIRECTIONS:
+                    count, end1, end2 = self._scan_line(grid, size, i, j, dx, dy, player)
+
+                    if 2 <= count <= 5:
+                        weight = self.SEQUENCE_WEIGHTS.get(count, 0)
+                        score += weight if is_ai else -weight
+
+                    if count in (4, 5):
+                        if self._is_open_cell(grid, size, end1) or self._is_open_cell(grid, size, end2):
+                            bonus = self.THREAT_WEIGHT if count == 5 else self.OPEN4_WEIGHT
+                            score += bonus if is_ai else -bonus
+
+        return score
+
+
+Heuristic1 = SequenceHeuristic
+Heuristic2 = ThreatAndCenterHeuristic
+
+HEURISTIC_REGISTRY = {
+    c.EVAL1: SequenceHeuristic,
+    c.EVAL2: ThreatAndCenterHeuristic,
+}
+
+
+def create_heuristic(name=c.EVAL1):
+    """Factory returning a BaseHeuristic instance for the given heuristic name."""
+    if isinstance(name, BaseHeuristic):
+        return name
+    heuristic_cls = HEURISTIC_REGISTRY.get(name, SequenceHeuristic)
+    return heuristic_cls()
+
 
 def heuristic_1(game_state):
-    """
-    First heuristic: Count sequences of stones in a row.
-    
-    This heuristic evaluates the board by:
-    - Counting sequences of AI stones (2, 3, 4, 5 in a row) with positive weights
-    - Counting sequences of human stones with negative weights
-    - Giving higher weights to longer sequences
-    
-    Args:
-        game_state: A Connect6Game instance
-        
-    Returns:
-        A numerical score (positive = good for AI, negative = good for human)
-    """
-    score = 0
-    directions = [(1, 0), (0, 1), (1, 1), (1, -1)]  # horizontal, vertical, diagonal, anti-diagonal
-    size = game_state.board.size
-    
-    # Weights for different sequence lengths
-    weights = {2: 1, 3: 10, 4: 100, 5: 1000}
-    
-    # Check all positions on the board
-    for i in range(size):
-        for j in range(size):
-            if game_state.board.grid[i][j] == '.':
-                continue
-            
-            player = game_state.board.grid[i][j]
-            is_ai = (player == game_state.ai_player)
-            
-            # Check each direction
-            for dx, dy in directions:
-                count = 1
-                # Count in positive direction
-                x, y = i + dx, j + dy
-                while 0 <= x < size and 0 <= y < size and game_state.board.grid[x][y] == player:
-                    count += 1
-                    x += dx
-                    y += dy
-                
-                # Count in negative direction
-                x, y = i - dx, j - dy
-                while 0 <= x < size and 0 <= y < size and game_state.board.grid[x][y] == player:
-                    count += 1
-                    x -= dx
-                    y -= dy
-                
-                # Only count sequences of 2-5 (6+ means game is over)
-                if 2 <= count <= 5:
-                    weight = weights.get(count, 0)
-                    if is_ai:
-                        score += weight
-                    else:
-                        score -= weight
-    
-    return score
+    """Evaluate `game_state` using SequenceHeuristic (backward-compatible helper)."""
+    return SequenceHeuristic().evaluate(game_state)
 
 
 def heuristic_2(game_state):
-    """
-    Second heuristic: Advanced evaluation with threats and center control.
-    
-    This heuristic evaluates the board by:
-    - Counting sequences of stones (like heuristic_1)
-    - Detecting threats (5 in a row that can be completed)
-    - Considering center control (positions closer to center are more valuable)
-    - Blocking opponent's threats
-    
-    Args:
-        game_state: A Connect6Game instance
-        
-    Returns:
-        A numerical score (positive = good for AI, negative = good for human)
-    """
-    score = 0
-    directions = [(1, 0), (0, 1), (1, 1), (1, -1)]
-    size = game_state.board.size
-    center = size // 2
-    
-    # Weights for different sequence lengths
-    weights = {2: 1, 3: 10, 4: 100, 5: 1000}
-    threat_weight = 7000  # Very high weight for threats (increase)
-    open4_weight = 1500    # Weight for open-4 threats (needs blocking)
-    
-    # Check all positions on the board
-    for i in range(size):
-        for j in range(size):
-            if game_state.board.grid[i][j] == '.':
-                continue
-            
-            player = game_state.board.grid[i][j]
-            is_ai = (player == game_state.ai_player)
-            
-            # Center control bonus (positions closer to center are better)
-            distance_from_center = abs(i - center) + abs(j - center)
-            center_bonus = (size - distance_from_center) * 0.1
-            if is_ai:
-                score += center_bonus
-            else:
-                score -= center_bonus
-            
-            # Check each direction
-            for dx, dy in directions:
-                count = 1
-                # Count in positive direction
-                x, y = i + dx, j + dy
-                while 0 <= x < size and 0 <= y < size and game_state.board.grid[x][y] == player:
-                    count += 1
-                    x += dx
-                    y += dy
-                
-                # Count in negative direction
-                x, y = i - dx, j - dy
-                while 0 <= x < size and 0 <= y < size and game_state.board.grid[x][y] == player:
-                    count += 1
-                    x -= dx
-                    y -= dy
-                
-                # Count sequences
-                if 2 <= count <= 5:
-                    weight = weights.get(count, 0)
-                    if is_ai:
-                        score += weight
-                    else:
-                        score -= weight
-                
-                # Check for threats (5 in a row with an open end)
-                if count == 5:
-                    # Check if there's an open space at either end
-                    end1_x, end1_y = i + dx * count, j + dy * count
-                    end2_x, end2_y = i - dx * count, j - dy * count
-                    
-                    threat_detected = False
-                    if (0 <= end1_x < size and 0 <= end1_y < size and 
-                        game_state.board.grid[end1_x][end1_y] == '.'):
-                        threat_detected = True
-                    if (0 <= end2_x < size and 0 <= end2_y < size and 
-                        game_state.board.grid[end2_x][end2_y] == '.'):
-                        threat_detected = True
-                    
-                    if threat_detected:
-                        if is_ai:
-                            score += threat_weight
-                        else:
-                            score -= threat_weight
-
-                # Check for open-4 (four in a row with at least one open end)
-                if count == 4:
-                    end1_x, end1_y = i + dx * count, j + dy * count
-                    end2_x, end2_y = i - dx * count, j - dy * count
-                    open_end = False
-                    if (0 <= end1_x < size and 0 <= end1_y < size and
-                        game_state.board.grid[end1_x][end1_y] == '.'):
-                        open_end = True
-                    if (0 <= end2_x < size and 0 <= end2_y < size and
-                        game_state.board.grid[end2_x][end2_y] == '.'):
-                        open_end = True
-                    if open_end:
-                        if is_ai:
-                            score += open4_weight
-                        else:
-                            score -= open4_weight
-    
-    return score
-
+    """Evaluate `game_state` using ThreatAndCenterHeuristic (backward-compatible helper)."""
+    return ThreatAndCenterHeuristic().evaluate(game_state)
